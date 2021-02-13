@@ -1,0 +1,7 @@
+# pytorch: CPU Only
+-f https://download.pytorch.org/whl/torch_stable.html
+torch==1.7.1+cpu
+torchvision==0.8.2+cpu
+
+# aiogram: dev version with the fixed issue https://github.com/aiogram/aiogram/issues/467
+git+https://github.com/aiogram/aiogram.git@dev-2.x#egg=aiogram
