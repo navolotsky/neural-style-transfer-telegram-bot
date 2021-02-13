@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor
+from urllib.parse import urljoin
 
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -14,7 +15,16 @@ from aiogram.types.input_media import InputMediaDocument, InputMediaPhoto
 from .inference import (ImageProcessingError, ImageTooBigError,
                         ImageTooSmallError, Task, TaskType, make_inference)
 
-API_TOKEN = os.environ['NEURAL_STYLE_TRANSFER_BOT_API_TOKEN']
+BOT_API_TOKEN = os.environ['BOT_API_TOKEN']
+
+WEBHOOK_HOST_ADDR = os.environ['WEBHOOK_HOST_ADDR']
+WEBHOOK_PATH = f"/webhook/{BOT_API_TOKEN}"
+WEBHOOK_URL = urljoin(WEBHOOK_HOST_ADDR, WEBHOOK_PATH)
+
+WEBAPP_HOST = "0.0.0.0"
+WEBAPP_PORT = os.environ['PORT']
+
+
 LIB_LOGGING_LEVEL = logging.INFO
 APP_LOGGING_LEVEL = logging.DEBUG
 
@@ -26,7 +36,7 @@ logging.basicConfig(level=LIB_LOGGING_LEVEL)
 logger = logging.getLogger(__name__)
 logger.setLevel(APP_LOGGING_LEVEL)
 
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=BOT_API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 pool = ProcessPoolExecutor(max_workers=1)
@@ -318,5 +328,22 @@ async def any_other_message_handler(message: types.Message, state: FSMContext):
     return
 
 
+async def on_startup(dp):
+    logging.warning('Starting...')
+    await bot.set_webhook(WEBHOOK_URL)
+
+
+async def on_shutdown(dp):
+    logging.warning('Shutting down...')
+    logging.warning('Bye!')
+
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host=WEBAPP_HOST,
+        port=WEBAPP_PORT,
+    )
