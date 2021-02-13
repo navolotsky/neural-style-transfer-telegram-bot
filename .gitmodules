@@ -1,0 +1,3 @@
+[submodule "neural_style_transfer_telegram_bot/pytorch-CycleGAN-and-pix2pix"]
+	path = neural_style_transfer_telegram_bot/pytorch-CycleGAN-and-pix2pix
+	url = https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix.git
