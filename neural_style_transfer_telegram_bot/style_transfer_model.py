@@ -296,7 +296,7 @@ class StyleTransferModel:
             raise RuntimeError("intended to invoking by `set_input`")
         content_img = self.content
         style_img = self.style
-        cnn = copy.deepcopy(self.net_feature_extractor)
+        cnn = self.net_feature_extractor
 
         # just in order to have an iterable access
         # to or list of content/syle losses
