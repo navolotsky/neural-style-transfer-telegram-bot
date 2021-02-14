@@ -4,12 +4,12 @@ import os
 from collections import OrderedDict
 
 import torch
-import torchvision
 from PIL import Image
 from torch import nn, optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+from torchvision.models import vgg
 from torchvision.transforms import functional as V
 
 from .utils import (LimitBiggestByScaling, ScaleByBiggest, gather_image_paths,
@@ -247,8 +247,9 @@ class StyleTransferModel:
 
         self.model_names = ['feature_extractor']
         self.visual_names = ['result']
-        self.net_feature_extractor = (
-            torchvision.models.vgg19().features.to(self.device).eval())
+        # Feature extractor from VGG19 (VGG Configuration E):
+        self.net_feature_extractor = (vgg.make_layers(
+            vgg.cfgs['E'], batch_norm=False).to(self.device).eval())
         # Disable unnecessary computations:
         for param in self.net_feature_extractor.parameters():
             param.requires_grad_(False)
