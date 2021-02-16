@@ -1,0 +1,1 @@
+["--gpu_ids", "-1", "--preprocess", "scale_width", "--load_size", "576"]

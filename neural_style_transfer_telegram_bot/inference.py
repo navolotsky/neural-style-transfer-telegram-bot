@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 from enum import Enum, auto
@@ -57,16 +58,31 @@ cycle_gan_task_types = (TaskType.photo2van_gogh, TaskType.photo2monet,
                         TaskType.photo2cezanne, TaskType.photo2ukiyoe)
 
 
+def create_model_factory_options():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--low_resource_mode", action='store_true',
+        help="whether to working with models using low resource configs"
+    )
+    options, _ = parser.parse_known_args()
+    return options
+
+
 class ModelNOptionsFactory:
-    def __init__(self):
+    def __init__(self, options):
         self._created_models_n_opts = {}
+        self.options = options
 
     def _create_model(self, task_type):
         name = pretrained_model_names[task_type]
+        if self.options.low_resource_mode:
+            config_file_name = "low_resource_model_configuration.json"
+        else:
+            config_file_name = "model_configuration.json"
         config_path = os.path.join(
             PRETRAINED_MODELS_DIR,
             name,
-            "model_configuration.json"
+            config_file_name
         )
         with open(config_path) as config_file:
             config = json.load(config_file)
@@ -97,10 +113,12 @@ class ModelNOptionsFactory:
         model_n_opts = self._created_models_n_opts.get(task_type)
         if model_n_opts is None:
             model_n_opts = self._create_model(task_type)
+        if self.options.low_resource_mode:
+            del self._created_models_n_opts[task_type]
         return model_n_opts
 
 
-get_model_n_options = ModelNOptionsFactory()
+get_model_n_options = ModelNOptionsFactory(create_model_factory_options())
 
 
 def create_dataloader(task_type, options):

@@ -1,0 +1,8 @@
+[
+    "--gpu_ids", "-1",
+    "--n_epochs", "100",
+    "--preprocess", "limit_biggest_by_scaling",
+    "--load_size", "250",
+    "--way_to_fit", "scale_then_crop",
+    "--save_best"
+]
