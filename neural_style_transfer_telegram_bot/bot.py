@@ -66,6 +66,7 @@ REQUESTS_IN_PROCESSING = {}
 
 
 @dp.message_handler(commands=['start', 'help', 'about', 'commands', 'request'])
+@dp.async_task
 async def send_welcome(message: types.Message):
     await StylizationRequest.waiting_for_style_chosen.set()
     if message.get_command(pure=True) != 'request':
@@ -82,6 +83,7 @@ async def send_welcome(message: types.Message):
 
 @dp.message_handler(state='*', commands='cancel')
 @dp.message_handler(Text(contains='cancel', ignore_case=True), state='*')
+@dp.async_task
 async def cancel_handler(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
     if current_state is None:
@@ -122,6 +124,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         reply_markup=types.ReplyKeyboardRemove())
 
 
+@dp.async_task
 async def style_chosen_handler(message: types.Message, state: FSMContext):
     for task_type, style in task_types_to_buttons.items():
         if style in message.text:
@@ -160,6 +163,7 @@ for value in task_types_to_buttons.values():
 @dp.message_handler(
     state=StylizationRequest.waiting_for_images,
     content_types=types.ContentTypes.PHOTO | types.ContentTypes.DOCUMENT)
+@dp.async_task
 async def save_images_as_mediagroup(message: types.Message, state: FSMContext):
     if message.content_type is types.ContentType.PHOTO:
         ext = '.jpg'
@@ -182,6 +186,7 @@ async def save_images_as_mediagroup(message: types.Message, state: FSMContext):
 @dp.message_handler(
     Text(contains='OK', ignore_case=True),
     state=StylizationRequest.waiting_for_images)
+@dp.async_task
 async def process_images(message: types.Message, state: FSMContext):
     if "get results as files" in message.text.lower():
         def GroupElement(path): return InputMediaDocument(InputFile(path))
@@ -305,6 +310,7 @@ async def process_images(message: types.Message, state: FSMContext):
 
 
 @dp.message_handler(state="*")
+@dp.async_task
 async def any_other_message_handler(message: types.Message, state: FSMContext):
     cur_state = await state.get_state()
     if cur_state is None:
