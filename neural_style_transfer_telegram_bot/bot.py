@@ -2,12 +2,14 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor
+from functools import reduce
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Text
 from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types.bot_command import BotCommand
 from aiogram.types.input_file import InputFile
 from aiogram.types.input_media import InputMediaDocument, InputMediaPhoto
 
@@ -47,6 +49,14 @@ choosing_task_keyboard.row(
     task_types_to_buttons[TaskType.photo2monet],
     task_types_to_buttons[TaskType.photo2cezanne])
 choosing_task_keyboard.add(task_types_to_buttons[TaskType.photo2ukiyoe])
+
+shortcuts_to_task_types = {
+    'p2st': TaskType.style_transfer,
+    'p2avg': TaskType.photo2van_gogh,
+    'p2am': TaskType.photo2monet,
+    'p2ac': TaskType.photo2cezanne,
+    'p2gu': TaskType.photo2ukiyoe
+}
 
 
 def get_max_pics_per_request(task_type):
@@ -111,34 +121,50 @@ async def cancel_handler(message: types.Message, state: FSMContext):
                 "got unexpected exception when awaiting cancelled inference")
         if future.cancelled():
             await message.reply(
-                "The request in processing cancelled. Start a new /request?",
+                "The request in processing is cancelled. "
+                "Start a new /request?",
                 reply_markup=types.ReplyKeyboardRemove())
             return
         elif future.done():
             await message.reply(
-                "The request already done. Start a new /request?",
+                "The request is already done. Start a new /request?",
                 reply_markup=types.ReplyKeyboardRemove())
             return
     await message.reply(
-        "Current scheduled request cancelled. Start a new /request?",
+        "Current scheduled request is cancelled. Start a new /request?",
         reply_markup=types.ReplyKeyboardRemove())
 
 
+@dp.message_handler(commands=list(shortcuts_to_task_types.keys()))
+@dp.message_handler(
+    reduce(Text.__or__, [Text(contains=value)
+                         for value in task_types_to_buttons.values()]),
+    state=StylizationRequest.waiting_for_style_chosen
+)
 @dp.async_task
 async def style_chosen_handler(message: types.Message, state: FSMContext):
-    for task_type, style in task_types_to_buttons.items():
-        if style in message.text:
-            break
+    shortcut = message.get_command(pure=True)
+    if shortcut:
+        await StylizationRequest.waiting_for_style_chosen.set()
+        task_type = shortcuts_to_task_types[shortcut]
+        style = task_types_to_buttons[task_type]
+        answer_text = f"You requested stylization — {style}.\n\n"
     else:
-        raise RuntimeError
+        for task_type, style in task_types_to_buttons.items():
+            if style in message.text:
+                break
+        else:
+            raise RuntimeError(
+                f"could not find task_type for {message.text} message")
+        answer_text = f"You chose — {style}.\n\n"
     await state.update_data(task_type=task_type, images=[])
     await StylizationRequest.next()
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.add("OK (get results as photos, by default)")
     keyboard.add("OK (get results as files, less compression)")
     keyboard.add("Cancel")
-    answer_text = (
-        f"You chose: {style}.\n\nNow please send "
+    answer_text += (
+        f"Now please send "
         f"up to {get_max_pics_per_request(task_type)} images. ")
     if task_type is TaskType.style_transfer:
         answer_text += (
@@ -151,13 +177,6 @@ async def style_chosen_handler(message: types.Message, state: FSMContext):
         "press OK to start processing images or press Cancel at any time "
         "if you changed your mind and want to do something different.")
     await message.answer(answer_text, reply_markup=keyboard)
-
-# Add several "contains" conditions for style_chosen_handler():
-for value in task_types_to_buttons.values():
-    dp.register_message_handler(
-        style_chosen_handler,
-        Text(contains=value),
-        state=StylizationRequest.waiting_for_style_chosen)
 
 
 @dp.message_handler(
@@ -175,8 +194,12 @@ async def save_images_as_mediagroup(message: types.Message, state: FSMContext):
         elif message.document.mime_type == 'image/png':
             ext = '.png'
         else:
-            raise ValueError(
-                f"unsupported mime_type {message.document.mime_type}")
+            await message.reply(
+                "It's not an image file in a supported format. "
+                "Currently supported formats: .jpg, .png.")
+            logger.warning("got file with currently unsupported mime_type %s.",
+                           message.document.mime_type)
+            return
     else:
         raise TypeError("content_type must be PHOTO or DOCUMENT")
     async with state.proxy() as proxy:
@@ -192,21 +215,53 @@ async def process_images(message: types.Message, state: FSMContext):
         def GroupElement(path): return InputMediaDocument(InputFile(path))
     else:
         def GroupElement(path): return InputMediaPhoto(InputFile(path))
-
+    # delay to give more time to save_images_as_mediagroup()
+    # for processing previous image messages:
+    await asyncio.sleep(1)
     data = await state.get_data()
     task_type = data['task_type']
     images = data['images']
-    answer_text = ""
     if not images:
+        how_many = "two" if task_type is TaskType.style_transfer else "one"
         await message.answer(
             "You sent no images. "
-            "Please send at least one or /cancel the request.")
+            f"Please send at least {how_many} or /cancel the request.")
         return
-
+    answer_text = ""
     max_pics_per_request = get_max_pics_per_request(task_type)
-    if len(images) > max_pics_per_request:
+    if task_type is TaskType.style_transfer:
+        if len(images) == 1:
+            await message.answer(
+                "You sent only one image. "
+                "A second one is required as a style source. "
+                "Please send at least one more image or /cancel the request.")
+            return
+        odd_number = len(images) % 2 != 0
+        too_many = len(images) > max_pics_per_request
+        answer_text = "Sorry, you sent "
+        if odd_number and too_many:
+            answer_text += (
+                "odd number of images. Also you sent too many images. ")
+        elif odd_number:
+            answer_text += "odd number of images. "
+        elif too_many:
+            answer_text += "too many images. "
+        if odd_number or too_many:
+            answer_text += (
+                f"Even number up to {max_pics_per_request} allowed. ")
+            above_limit = max(len(images) % 2, len(
+                images) - max_pics_per_request)
+            if above_limit == 1:
+                answer_text += f"{above_limit} last image "
+            else:
+                answer_text += f"{above_limit} last images "
+            answer_text += "will be ignored.\n\n"
+            del images[len(images) - above_limit:]
+        else:
+            answer_text = ""
+    elif len(images) > max_pics_per_request:
         answer_text = (f"Sorry, you sent too many images. "
-                       f"Up to {max_pics_per_request} allowed.")
+                       f"Up to {max_pics_per_request} allowed. ")
         above_limit = len(images) - max_pics_per_request
         if above_limit == 1:
             answer_text += f"{above_limit} image "
@@ -214,25 +269,6 @@ async def process_images(message: types.Message, state: FSMContext):
             answer_text += f"{above_limit} images "
         answer_text += "above the limit will be ignored.\n\n"
         del images[max_pics_per_request:]
-    elif (
-        task_type is TaskType.style_transfer and
-        len(images) % 2 != 0
-    ):
-        if len(images) == 1:
-            await message.answer(
-                "You sent only one image. "
-                "A second one is required as a style source. "
-                "Please send more images or /cancel the request.")
-            return
-        answer_text = (f"Sorry, you sent odd number of images. "
-                       f"Even number up to {max_pics_per_request} allowed. ")
-        above_limit = len(images) % 2
-        if above_limit == 1:
-            answer_text += f"{above_limit} last image "
-        else:
-            answer_text += f"{above_limit} last images "
-        answer_text += "will be ignored.\n\n"
-        del images[len(images) - above_limit:]
     await message.answer(
         answer_text +
         "Please wait for your images to be processed or /cancel the request.",
@@ -309,6 +345,41 @@ async def process_images(message: types.Message, state: FSMContext):
                 "got unexpected exception when cleaning up: case #3")
 
 
+@dp.message_handler(
+    content_types=types.ContentTypes.PHOTO | types.ContentTypes.DOCUMENT,
+    state='*')
+@dp.async_task
+async def image_sent_at_wrong_time_handler(
+        message: types.Message, state: FSMContext):
+    cur_state = await state.get_state()
+    answer_text = "There is nothing to do with this for now. "
+    if cur_state is None:
+        answer_text += "Please see a /help or start a /request."
+    elif cur_state == StylizationRequest.waiting_for_style_chosen.state:
+        answer_text += "Please choose desired action at first."
+    elif cur_state == StylizationRequest.processing.state:
+        answer_text += (
+            "Please wait for your already sent images to be processed "
+            "or /cancel current request.")
+    else:
+        raise RuntimeError(f"unknown state {cur_state}")
+    await message.reply(answer_text)
+
+
+BAD_CONTENT = list(
+    set(types.ContentTypes.all()) -
+    set(types.ContentTypes.PHOTO | types.ContentTypes.DOCUMENT |
+        types.ContentTypes.TEXT | types.ContentTypes.ANY))
+
+
+@dp.message_handler(content_types=BAD_CONTENT, state="*")
+@dp.async_task
+async def bad_content_handler(message: types.Message):
+    await message.reply(
+        "There is nothing to do with this. "
+        "Photo, photo as a document or text message are only acceptable.")
+
+
 @dp.message_handler(state="*")
 @dp.async_task
 async def any_other_message_handler(message: types.Message, state: FSMContext):
@@ -327,6 +398,18 @@ async def any_other_message_handler(message: types.Message, state: FSMContext):
 
 async def on_startup(dp):
     logging.info('Starting...')
+    await dp.bot.set_my_commands([
+        BotCommand('start', "a conversation"),
+        BotCommand('help', "currently /start synonym"),
+        BotCommand('request', "a new stylization"),
+        BotCommand('cancel', "the request at any time"),
+    ] +
+        [BotCommand(
+            command, "shortcut for the request — " +
+            task_types_to_buttons[task_type]
+        ) for command, task_type in shortcuts_to_task_types.items()],
+    )
+    return
 
 
 async def on_shutdown(dp):
